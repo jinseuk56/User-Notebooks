@@ -10,7 +10,7 @@
 - This guide only deals with data acquired using E02 (Grand ARM300CF; JEOL, MerlinEM; Quantum Detectors, Aztec; Oxford Instruments)
 - Please refer to the following article to see what you can do with 4DSTEM: [py4DSTEM: A Software Package for Four-Dimensional Scanning Transmission Electron Microscopy Data Analysis](https://dx.doi.org/10.1017/S1431927621000477)
 - [py4DSTEM](https://github.com/py4dstem/py4DSTEM) and [pyxem](https://github.com/pyxem/pyxem?tab=readme-ov-file) are very useful generally for 4DSTEM data processing and analysis
-- Please contact Jinseok Ryu, PhD (jinseok.ryu@diamond.ac.uk) if you have any questions about this workflow
+- Please contact Jinseok Ryu, PhD (jinseuk56@gmail.com) if you have any questions about this workflow
 # MIB conversion
 - The format of raw 4DSTEM data is '.mib'
 - mib files must be converted into the 'hdf5' files using 'MIB_conversion/MIB_convert.ipynb'
@@ -67,5 +67,6 @@
 ![EDX](img/EDX_path.png) ![EDX](img/EDX_data.png)  
 *The EDX data must be stored as shown in the images above (~/subfolder/EDX/\*.rpl)*
 - Details can be found inside the notebook
+
 
 
