@@ -638,9 +638,9 @@ class radial_profile_analysis():
         fig, ax = plt.subplots(1, 1, figsize=(6, 4), dpi=300)
         for lv in range(self.num_comp):
             if self.NMF_profile_type == "zernike":
-                tmp_ax = ax.plot(self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1], label="lv %d"%(lv+1))
+                tmp_ax, = ax.plot(self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1], label="lv %d"%(lv+1))
             else:
-                tmp_ax = ax.plot(self.x_axis, self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1], label="lv %d"%(lv+1))
+                tmp_ax, = ax.plot(self.x_axis, self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1], label="lv %d"%(lv+1))
 
             shadow_effect = path_effects.withStroke(linewidth=3, foreground='gray')
             tmp_ax.set_path_effects([shadow_effect])
@@ -792,9 +792,9 @@ class radial_profile_analysis():
             lv_mean_lv = []
             fig_lv, ax_lv = plt.subplots(1, 3, figsize=(12, 4), dpi=300)
             if self.NMF_profile_type == 'zernike':
-                tmp_ax = ax_lv[0].plot(self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1])
+                tmp_ax, = ax_lv[0].plot(self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1])
             else:
-                tmp_ax = ax_lv[0].plot(self.x_axis, self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1])
+                tmp_ax, = ax_lv[0].plot(self.x_axis, self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1])
 
             shadow_effect = path_effects.withStroke(linewidth=3, foreground='gray')
             tmp_ax.set_path_effects([shadow_effect])
@@ -1788,7 +1788,7 @@ class radial_profile_analysis():
             peaks = peaks + self.from_
             peak_sub[self.subfolders[i]] = peaks
             
-            tmp_ax = ax.plot(self.x_axis, tmp_sp, c=self.color_rep[i+1], label=self.subfolders[i])
+            tmp_ax, = ax.plot(self.x_axis, tmp_sp, c=self.color_rep[i+1], label=self.subfolders[i])
             shadow_effect = path_effects.withStroke(linewidth=3, foreground='gray')
             tmp_ax.set_path_effects([shadow_effect])
 
@@ -3131,7 +3131,7 @@ class drca():
             if self.dat_dim == 3:
                 fig, ax = plt.subplots(1, 1, figsize=(6, 4), dpi=300) # all loading vectors
                 for i in range(self.DR_num_comp):
-                    tmp_ax = ax.plot(self.dat_dim_range, self.DR_comp_vectors[i], "-", c=self.color_rep[i+1], label="loading vector %d"%(i+1))
+                    tmp_ax, = ax.plot(self.dat_dim_range, self.DR_comp_vectors[i], "-", c=self.color_rep[i+1], label="loading vector %d"%(i+1))
                     shadow_effect = path_effects.withStroke(linewidth=3, foreground='gray')
                     tmp_ax.set_path_effects([shadow_effect])
                                         
