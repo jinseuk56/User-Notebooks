@@ -1,6 +1,6 @@
 # Atomic structure analysis with radial (azimuthal) average & variance profiles
 # Only compatible with the ePSIC data processig workflow
-# Jinseok Ryu (jinseok.ryu@diamond.ac.uk or jinseuk56@gmail.com)
+# Jinseok Ryu (jinseuk56@gmail.com)
 # ePSIC, Diamond Light Source
 import os
 import glob
@@ -9,10 +9,6 @@ from scipy.ndimage import gaussian_filter
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-try:
-    plt.rcParams['font.family'] = 'Nimbus Roman' # for Linux
-except:
-    plt.rcParams['font.family'] = 'Times New Roman' # for Windows
 
 import py4DSTEM
 import hyperspy.api as hs
@@ -29,6 +25,11 @@ from sklearn.cluster import DBSCAN, HDBSCAN, OPTICS
 import ipywidgets as pyw
 import time
 
+import pandas as pd
+from collections import Counter
+import pickle
+from scipy.spatial.distance import pdist, squareform
+from collections import defaultdict
 
 class radial_profile_analysis():
     def __init__(self, base_dir, subfolders, profile_length, num_load, final_dir=None,
@@ -1330,7 +1331,7 @@ class radial_profile_analysis():
                     fig, ax = plt.subplots(1, 2, figsize=(12, 6), dpi=300)
                     ax[0].imshow(binary_map, cmap='gray')
                     ax[1].imshow(clustered, cmap='tab20')
-                    fig.suptitle(self.subfolders[i]+'\nLoading vector %d\n'%(lv+1)+os.path.basename(self.loaded_data_path[i][j])[:15]+"\nBefore and After clustering")
+                    fig.suptitle(self.subfolders[self.sub_ind]+'\nLoading vector %d\n'%(lv+1)+os.path.basename(self.loaded_data_path[self.sub_ind][self.img_ind])[:15]+"\nBefore and After clustering")
                     plt.show()
             
             self.clustered_lv = clustered_lv
@@ -1359,7 +1360,7 @@ class radial_profile_analysis():
                 fig, ax = plt.subplots(1, 2, figsize=(12, 6), dpi=300)
                 ax[0].imshow(binary_map, cmap='gray')
                 ax[1].imshow(clustered, cmap='tab20')
-                fig.suptitle(self.subfolders[i]+'-'%(lv+1)+os.path.basename(self.loaded_data_path[i][j])[:15]+"\nBefore and After clustering")
+                fig.suptitle(self.subfolders[self.sub_ind]+'-'%(lv+1)+os.path.basename(self.loaded_data_path[self.sub_ind][self.img_ind])[:15]+"\nBefore and After clustering")
                 fig.tight_layout()
                 plt.show()
             
@@ -3656,8 +3657,421 @@ class drca():
             plt.show()
 
 
+
+class phase_analysis:
+    def phase_matching_initialization(self, str_path, target_structures, profile, crop=None, color_rep=None):
+        
+        self.str_path = str_path
+        self.target_structures = target_structures
+        self.profile = profile
+
+        if self.target_structures == None:
+            self.target_structures = []
+            for adr in self.str_path:
+                self.target_structures.append(os.path.basename(adr).split('.')[0])
+
+        if crop != None:
+            self.crop = crop
+        else:
+            self.crop = [0, len(profile[0])]
+
+        if color_rep != None:
+            self.color_rep = color_rep
+        else:
+            self.color_rep = ["white", "black", "red", "green", "blue", "orange", "purple", "yellow", "lime", "cyan"]
+
+        if len(self.color_rep) < len(self.profile):
+            print("The number of colors for plotting is less than that of profiles.")
+            print("Plotting may not work.")
+
+        self.experimental_cols = [f'LV{i}' for i in range(1, len(self.profile)+1)]
+
+    def simple_comparsion(self, cif_adr, profile_k_step, xrd_k_step, broadening, xrd_peak_prominence, ylim=None):
+        k_range = []
+        for i in range(self.crop[0], self.crop[1], 1):
+            k_range.append(profile_k_step*i)
+
+        k_xrd = np.arange(k_range[0], k_range[-1]+xrd_k_step, xrd_k_step) 
+
+        basename, simul_xrd, xrd_peaks = simul_xrd_peak(cif_adr, k_xrd, broadening, xrd_peak_prominence)
+
+        for lv, line in enumerate(self.profile):        
+            profile_peaks = profile_peak(line=line, 
+                                    k_step=profile_k_step, 
+                                    crop=self.crop, 
+                                    peak_prominence=1E-9, 
+                                    max_num_peaks=3)
+    
+            line = line[self.crop[0]:self.crop[1]].copy()
+            line = line / np.max(line)
+            fig, ax = plt.subplots(1, 1, figsize=(8, 4), dpi=100)
+            ax.plot(k_xrd, simul_xrd, 'k:', label=basename, linewidth=2)
+            ax.plot(k_range, line, c=self.color_rep[lv+1], label="LV%d"%(lv+1), linewidth=2)
+
+            for peak in profile_peaks:
+                ax.axvline(peak, ls=':', lw=1.5, c=self.color_rep[lv+1], alpha=0.5)
+                ax.text(peak, 0.7, "%.3f"%(peak), c=self.color_rep[lv+1], fontsize=7)
+
+            for peak in xrd_peaks:
+                ax.axvline(peak, ls=':', lw=1.5, c='black', alpha=0.5)
+                ax.text(peak, 0.9, "%.3f"%(peak), c="black", fontsize=7)
+
+            if ylim != None:
+                ax.set_ylim(ylim[0], ylim[1])
+            
+            ax.legend()
+            fig.tight_layout()
+            plt.show()           
+
+    def MMAD_matching(self, profile_step_list, 
+                      profile_prominence,
+                      max_num_peaks, 
+                      xrd_step_list, 
+                      xrd_broadening_list, 
+                      xrd_prominence_list,
+                      num_good_match=1):
+        
+        results = []
+        for scale in profile_step_list:
+            k_range = []
+            for i in range(self.crop[0], self.crop[1], 1):
+                k_range.append(scale*i)
+
+            for scale_xrd in xrd_step_list:
+                k_xrd = np.arange(k_range[0], k_range[-1]+scale_xrd, scale_xrd)
+                
+                for broadening in xrd_broadening_list:
+                    for prominence_xrd in xrd_prominence_list:
+
+                        # Find peak positions in the profile data
+                        peak_positions = []
+                        for lv, line in enumerate(self.profile):
+                            peak_positions.append(profile_peak(line=line, 
+                                                                k_step=scale, 
+                                                                crop=self.crop, 
+                                                                peak_prominence=profile_prominence, 
+                                                                max_num_peaks=max_num_peaks))
+
+                        # Simulate XRD data and find peak positions
+                        basenames = []
+                        xrd_peak_list = []
+                        simul_xrds = []
+                        for adr in self.str_path:
+                            basename, simul_xrd, xrd_peaks = simul_xrd_peak(adr=adr, 
+                                                                            k_range=k_xrd, 
+                                                                            broadening=broadening, 
+                                                                            peak_prominence=prominence_xrd)
+                            simul_xrds.append(simul_xrd)
+                            basenames.append(basename)
+                            xrd_peak_list.append(xrd_peaks)
+
+                        # Sort out the peak position data
+                        table_data = {}
+                        for i in range(len(self.profile)):
+                            table_data["LV%d"%(i+1)] = pd.Series(peak_positions[i])
+                        for i, name in enumerate(basenames):
+                            table_data[name] = pd.Series(xrd_peak_list[i])
+                        df_data = pd.DataFrame(table_data)
+
+                        # Calculate the mean of minimum absolute differences (MMAD)
+                        results_mmad_subset = mmad_score(df_data=df_data, 
+                                                        experimental_cols=self.experimental_cols, 
+                                                        target_structures=self.target_structures)
+
+                        # Leave only good match results
+                        table_data = []
+                        good_match = []
+                        # print(scale, scale_xrd, broadening)
+                        for lv_name, ranked_matches in results_mmad_subset.items():
+                            prev_mmad_score = 0
+                            prev_rank = 0
+                            three_kind = 1
+                            for i, match in enumerate(ranked_matches):
+                                same_rank_flag = False
+                                mmad_score_str = f"{match['mmad_score']:.6f}" if match['mmad_score'] != float('inf') else "inf"
+
+                                if i != 0:
+                                    if mmad_score_str != "inf" and prev_mmad_score != "inf" and float(mmad_score_str) == float(prev_mmad_score):
+                                        same_rank_flag = True
+
+                                table_data.append({
+                                    "LV": lv_name,
+                                    "Rank (reciprocal distance)": prev_rank if same_rank_flag else i+1,
+                                    "Structure": match['simulation'],
+                                    "SAD Score": mmad_score_str,
+                                })
+
+                                prev_mmad_score = mmad_score_str
+
+                                if same_rank_flag:
+                                    prev_rank = prev_rank
+                                else:
+                                    prev_rank = i+1
+
+                                if i < num_good_match:
+                                    # print(lv_name, match['simulation'], mmad_score_str)
+                                    good_match.append([lv_name, match['simulation'], mmad_score_str])
+
+                        df_summary = pd.DataFrame(table_data)
+                        parameters = [scale, scale_xrd, broadening, prominence_xrd]
+                        results.append([parameters, good_match, df_summary])
+        
+        self.match_results = results
+
+    def best_match_diff(self):
+        diffs = []
+        params = []
+        matchings = []
+        for r, result in enumerate(self.match_results):
+            diff = []
+            for i in range(1, len(result)):
+                if result[1][i][0] == result[1][i-1][0]:
+                    diff.append(np.abs(eval(result[1][i][2]) - eval(result[1][i-1][2])))
+
+            diffs.append([np.mean(diff), np.std(diff)])
+            params.append(result[0])
+            matchings.append(result[2].values)
+
+        self.diffs = np.asarray(diffs)
+        self.params = np.asarray(params)
+        self.matchings = np.asarray(matchings)
+        self.sort_diff_ind = np.argsort(self.diffs[:, 0])
+        print("Three largest means of differences")
+        print(self.diffs[self.sort_diff_ind[-1]], self.diffs[self.sort_diff_ind[-2]], self.diffs[self.sort_diff_ind[-3]])
+
+        return diffs[self.sort_diff_ind[-1]], params[self.sort_diff_ind[-1]], matchings[self.sort_diff_ind[-1]]
+    
+    def best_match_frequency(self):
+        ind = np.where(self.matchings == 1)
+        # print(matchings[ind[0], ind[1]])
+
+        print("Best result in terms of frequency")
+        for i in range(len(self.profile)):
+            temp_sort = self.matchings[ind[0], ind[1]]
+            ind_lv = np.where(temp_sort == 'LV%d'%(i+1))
+            # print(temp_sort[ind_lv[0]][:, 2])
+            count = Counter(temp_sort[ind_lv[0]][:, 2])
+            # print(count.most_common(1))
+            print("LV%d"%(i+1), count.most_common(3))
+
+
+    def neighbor_phase_initialization(self, pkl_adr):
+        print(pkl_adr)
+
+        with open(pkl_adr, "rb") as f:
+            run_object = pickle.load(f)
+            
+        print(run_object.keys())
+
+        self.pos_lv_pixel_split = run_object["pos_lv_pixel_split"]
+
+        small_area_split = []
+        for i in range(len(self.pos_lv_pixel_split)):
+            sub_data = self.pos_lv_pixel_split[i]
+            small_area_sub = []
+            for j in range(len(sub_data)):
+                indv_data = sub_data[j]
+                small_area_indv = []
+                for lv in range(len(indv_data)):
+                    lv_data = indv_data["nominal_LV%d"%(lv+1)]
+                    small_area_lv = []
+                    # print(len(lv_data))
+                    for cluster in lv_data:
+                        small_area_lv.append(len(cluster))
+                    small_area_indv.append(small_area_lv)
+                small_area_sub.append(small_area_indv)
+            small_area_split.append(small_area_sub)
+
+        self.small_area_split = small_area_split
+
+        self.centroid_lv_split = run_object["centroid_lv_split"]
+
+        table_data = []
+        for i in range(len(self.centroid_lv_split)):
+            sub_centroid = self.centroid_lv_split[i]
+            for j in range(len(sub_centroid)):
+                indv_centroid = sub_centroid[j]
+                for lv in range(len(indv_centroid)):
+                    lv_centroid = indv_centroid[lv]
+                    for k, ct in enumerate(lv_centroid):
+                        try:
+                            table_data.append({
+                            "Sub Index": i+1,
+                            "Data Index": j+1,
+                            "LV": lv+1,
+                            "Centroid Y": ct[0],
+                            "Centroid X": ct[1],
+                            "Area": small_area_split[i][j][lv][k]    
+                            })
+                        except:
+                            pass
+
+        self.df_summary = pd.DataFrame(table_data)
+
+    def area_analysis(self):
+        label_list = np.unique(self.df_summary['LV'].values)
+        label_list = np.sort(label_list)
+
+        mean_areas = []
+        std_areas = []
+        total_areas = []
+        sub_index_list = np.unique(self.df_summary['Sub Index'].values)
+        sub_index_list = np.sort(sub_index_list)
+        
+        for sub_index in sub_index_list:
+            mean_area_sub = []
+            std_area_sub = []
+            total_area_sub = []
+            for label in label_list:            
+                area = self.df_summary[self.df_summary['LV'] == label]
+                area = area[area["Sub Index"] == sub_index]["Area"].values
+                mean_area_sub.append(np.mean(area))
+                std_area_sub.append(np.std(area))
+                total_area_sub.append(np.sum(area))
+
+            mean_areas.append(mean_area_sub)
+            total_areas.append(total_area_sub)
+            std_areas.append(std_area_sub)
+
+        self.mean_areas = np.asarray(mean_areas)
+        # print(self.mean_areas.shape)
+        self.std_areas = np.asarray(std_areas)
+        # print(self.std_areas.shape)
+        self.total_areas = np.asarray(total_areas)
+        # print(self.total_areas.shape)
+
+        print("Cluster Size and Area Information")
+        for s, sub_index in enumerate(sub_index_list):
+            print("Subfolder Index: %d"%(sub_index))
+            print("LV\tMean\tSTD\tTotal\tPercentage")
+            for i, label in enumerate(label_list):
+                print(f"{label}\t{int(mean_areas[s][i])}\t{std_areas[s][i]:.2f}\t{int(total_areas[s][i])}\t{total_areas[s][i]*100/np.sum(total_areas[s]):.1f}")
+
+
+    def closest_neighbor_analysis(self, prox_neighbors=3, plot_result=False):
+        self.df_summary['ID'] = range(len(self.df_summary))
+        
+        lv_neighborhoods = defaultdict(list)
+        neighbor_data = []
+
+        grouped = self.df_summary.groupby(['Sub Index', 'Data Index'])
+
+        for name, group in grouped:
+            if len(group) <= 1:
+                continue
+
+            coordinates = group[['Centroid X', 'Centroid Y']].values
+            distance_matrix = squareform(pdist(coordinates, 'euclidean'))
+            
+            for i in range(len(group)):
+                distances = distance_matrix[i]
+                sorted_indices = np.argsort(distances)
+                
+                num_neighbors = min(5, len(group) - 1)
+                closest_indices = sorted_indices[1:1+num_neighbors]
+                
+                source_centroid = group.iloc[i]
+                source_lv = source_centroid['LV']
+
+                # --- Data collection for CSV output ---
+                for rank, neighbor_index in enumerate(closest_indices, 1):
+                    neighbor = group.iloc[neighbor_index]
+                    distance = distances[neighbor_index]
+                    neighbor_data.append({
+                        'Source_ID': source_centroid['ID'], 'Source_LV': source_centroid['LV'],
+                        'Source_X': source_centroid['Centroid X'], 'Source_Y': source_centroid['Centroid Y'],
+                        'Neighbor_Rank': rank, 'Neighbor_ID': neighbor['ID'], 'Neighbor_LV': neighbor['LV'],
+                        'Neighbor_X': neighbor['Centroid X'], 'Neighbor_Y': neighbor['Centroid Y'],
+                        'Distance': distance
+                    })
+                
+                # --- Data collection for markdown summaries ---
+                # For proximity matrix (uses the specified number of neighbors)
+                for neighbor_index in closest_indices[:prox_neighbors]:
+                    lv_neighborhoods[source_lv].append(group.iloc[neighbor_index]['LV'])
+                
+        # --- Generate DataFrames for summaries and plots ---
+        all_lvs = sorted(list(set(self.df_summary['LV'])))
+        histogram_df = pd.DataFrame(0.0, index=all_lvs, columns=all_lvs)
+        proximity_df = pd.DataFrame(0.0, index=all_lvs, columns=all_lvs)
+        for source_lv, neighbors in lv_neighborhoods.items():
+            total_neighbors = len(neighbors)
+            if total_neighbors > 0:
+                counts = pd.Series(neighbors).value_counts()
+                for neighbor_lv, count in counts.items():
+                    histogram_df.loc[source_lv, neighbor_lv] = int(count)
+                    proximity_df.loc[source_lv, neighbor_lv] = (count / total_neighbors * 100)
+
+        print("Nearest neigboring phase")
+        print("Source LV\tNeighbor LV")
+        for i, row in proximity_df.iterrows():
+            values = row.tolist()
+            print("%d\t%d"%(i, np.argmax(values)+1))
+
+        # --- Generate and display plots ---
+        # Plot for Closest Neighbor Histogram (as a heatmap)
+        if plot_result:
+            fig, ax = plt.subplots(figsize=(5, 4), dpi=300)
+            im = ax.imshow(histogram_df, cmap='seismic')
+
+            # Create colorbar
+            cbar = ax.figure.colorbar(im, ax=ax)
+            cbar.ax.set_ylabel("Count", rotation=-90, va="bottom")
+
+            # Set ticks and labels
+            ax.set_xticks(np.arange(len(histogram_df.columns)))
+            ax.set_yticks(np.arange(len(histogram_df.index)))
+            ax.set_xticklabels(histogram_df.columns)
+            ax.set_yticklabels(histogram_df.index)
+            ax.set_xlabel('Closest Neighbor LV', fontsize=12)
+            ax.set_ylabel('Source LV', fontsize=12)
+
+            # Loop over data dimensions and create text annotations.
+            for i in range(len(histogram_df.index)):
+                for j in range(len(histogram_df.columns)):
+                    val = histogram_df.iloc[i, j]
+                    # Adjust text color for readability on the seismic colormap
+                    color = "black" if 0.2 < im.norm(val) < 0.8 else "white"
+                    ax.text(j, i, "%d"%val, ha="center", va="center", color=color)
+            
+            ax.tick_params(top=True, labeltop=True, bottom=False, labelbottom=False)
+            fig.tight_layout()
+            plt.show()
+
+            fig, ax = plt.subplots(figsize=(5, 4), dpi=300)
+            im = ax.imshow(proximity_df, cmap='seismic')
+
+            # Create colorbar
+            cbar = ax.figure.colorbar(im, ax=ax)
+            cbar.ax.set_ylabel("Percentage (%)", rotation=-90, va="bottom")
+
+            # Set ticks and labels
+            ax.set_xticks(np.arange(len(proximity_df.columns)))
+            ax.set_yticks(np.arange(len(proximity_df.index)))
+            ax.set_xticklabels(proximity_df.columns)
+            ax.set_yticklabels(proximity_df.index)
+            ax.set_xlabel('Neighbor LV', fontsize=12)
+            ax.set_ylabel('Source LV', fontsize=12)
+
+            # Loop over data dimensions and create text annotations.
+            for i in range(len(proximity_df.index)):
+                for j in range(len(proximity_df.columns)):
+                    val = proximity_df.iloc[i, j]
+                    # Use a threshold to decide text color for readability
+                    color = "black" if 0.2 < im.norm(val) < 0.8 else "white"
+                    ax.text(j, i, f"{val:.1f}", ha="center", va="center", color=color)
+            
+            # ax.set_title(f'LV Proximity Matrix (% of Top {prox_neighbors} Neighbors)', fontsize=16)
+            ax.tick_params(top=True, labeltop=True, bottom=False, labelbottom=False)
+            fig.tight_layout()
+            plt.show()
+
+        return histogram_df, proximity_df
+
+
+
 #####################################################
-# functions #
+# Functions - Stard #
 #####################################################
 def data_load_3d(adr, crop=None, rescale=True, DM_file=True, rebin_256=False, verbose=True):
     """
@@ -3897,6 +4311,134 @@ def label_arrangement(label_arr, new_shape):
         
     return label_reshape, selected, hist
 
+def profile_peak(line, k_step, crop=None, peak_prominence=1E-10, max_num_peaks=3):
+    if crop == None:
+        crop_start = 0
+        crop_end = len(line)
+        print("the full profile is used")
+
+    else:
+        crop_start = crop[0]
+        crop_end = crop[-1]
+        print(f"crop range: {crop_start} ({crop_start*k_step}) - {crop_end} ({crop_end*k_step}) ")
+    
+    line = line[crop_start:crop_end].copy()
+    line /= np.max(line)
+    peaks = find_peaks(line, prominence=peak_prominence)
+    peaks, properties = peaks[0], peaks[1]['prominences']
+    peak_argsort = np.argsort(properties)    
+    peak_ind = peaks[:]
+    peak_values = line[peak_ind]
+    peak_values = peak_values[peak_argsort]
+    peaks = peaks * k_step
+    peaks = peaks + crop_start * k_step
+    peaks = peaks[peak_argsort][-max_num_peaks:]
+
+    return peaks
+
+def simul_xrd_peak(adr, k_range, broadening, peak_prominence):
+    basename = os.path.basename(adr).split('.')[0]
+    # print(f"Structure Name: {basename}")
+
+    try:
+        crystal_cif = py4DSTEM.process.diffraction.Crystal.from_CIF(adr, conventional_standard_structure=False)
+    except:
+        crystal_cif = py4DSTEM.process.diffraction.Crystal.from_CIF(adr, conventional_standard_structure=True)
+    crystal_cif.calculate_structure_factors(k_range[-1])
+
+    from_cif = py4DSTEM.process.diffraction.utils.calc_1D_profile(
+        k_range,
+        crystal_cif.g_vec_leng,
+        crystal_cif.struct_factors_int,
+        k_broadening=broadening,
+        int_scale=1.0,
+        normalize_intensity=True)
+
+    peaks = find_peaks(from_cif, height=None, 
+                        width=None, 
+                        threshold=None, 
+                        distance=None, 
+                        prominence=peak_prominence)[0]
+
+    peaks = peaks * (k_range[1]-k_range[0]) + k_range[0]
+
+    return basename, from_cif, peaks
+
+def mmad_score(df_data, experimental_cols, target_structures=None):
+    # Validate that the target structures are present in the DataFrame
+    if target_structures != None:
+        valid_targets_in_new_data = [s for s in target_structures if s in df_data.columns]
+        missing_targets_in_new_data = [s for s in target_structures if s not in df_data.columns]
+    else:
+        valid_targets_in_new_data = [s for s in df_data.columns]
+        missing_targets_in_new_data = []
+
+    if missing_targets_in_new_data:
+        print(f"Warning: The following target structures were not found in the new data columns: {missing_targets_in_new_data}")
+    if not valid_targets_in_new_data:
+        print("Error: None of the specified target structures are present in the new data.")
+        return
+
+    # --- Perform Reciprocal Distance Matching (Mean of Minimum Absolute Differences, MMAD) for the targeted Subset ---
+    results_mmad_subset = {}
+    for lv_col_name in experimental_cols:
+        if lv_col_name not in df_data.columns:
+            print(f"Warning: LV column {lv_col_name} not found in the new data. Skipping this LV.")
+            results_mmad_subset[lv_col_name] = []
+            continue
+
+        lv_peaks_series = df_data[lv_col_name].dropna()
+        if lv_peaks_series.empty:
+            print(f"LV column {lv_col_name} has no experimental peaks. Skipping.")
+            results_mmad_subset[lv_col_name] = [{'simulation': s, 'mmad_score': float('inf'), 'lv_peaks_matched': 0} for s in valid_targets_in_new_data]
+            # Sort them anyway for consistent output structure
+            results_mmad_subset[lv_col_name] = sorted(results_mmad_subset[lv_col_name], key=lambda x: x['mmad_score'])
+            continue
+
+        # Reshape for cdist: LV peaks as column vector
+        lv_peaks_np = lv_peaks_series.values.reshape(-1, 1)
+        num_lv_peaks = len(lv_peaks_np)
+        scores_for_lv = []
+
+        for sim_col_name in valid_targets_in_new_data:
+            sim_peaks_series = df_data[sim_col_name].dropna()
+
+            mmad_score = float('inf') # Default for poor matches or no sim peaks
+
+            if not sim_peaks_series.empty:
+                # Reshape for cdist: Simulation peaks as row vector (or column, cdist handles it)
+                sim_peaks_np = sim_peaks_series.values.reshape(-1, 1)
+                mmad_score = 0
+                for peak in lv_peaks_np:
+                    abs_diff = np.abs(sim_peaks_np - peak)
+                    # print(abs_diff)
+                    # print(np.min(abs_diff))
+                    mmad_score += np.min(abs_diff)
+                # min_diffs_for_lv_peaks = np.min(cdist(lv_peaks_np, sim_peaks_np, 'cityblock'), axis=1)
+                # mmad_score = np.sum(min_diffs_for_lv_peaks)
+            # If sim_peaks_series is empty but lv_peaks_series is not, mmad_score remains float('inf')
+
+            scores_for_lv.append({
+                'simulation': sim_col_name, 
+                'mmad_score': mmad_score, 
+                'lv_peaks_matched': num_lv_peaks # This is the number of LV peaks we tried to match
+            })
+
+        sorted_scores = sorted(scores_for_lv, key=lambda x: x['mmad_score'])
+        results_mmad_subset[lv_col_name] = sorted_scores
+
+    return results_mmad_subset
+
+#####################################################
+# Functions - END #
+#####################################################
+
+
+
+
+# Concave hull
+# original code: https://github.com/M-Lin-DM/Concave-Hulls
+# slightly modified by J. Ryu
 
 try:
     from shapely.geometry import Point
@@ -3905,10 +4447,6 @@ try:
 
 
     class ConcaveHull(object):
-        '''
-        original code: https://github.com/M-Lin-DM/Concave-Hulls
-        modified by J. Ryu
-        '''
         def __init__(self, points, k):
             if isinstance(points, np.core.ndarray):
                 self.data_set = points
