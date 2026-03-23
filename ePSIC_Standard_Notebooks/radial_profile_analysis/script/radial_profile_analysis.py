@@ -19,6 +19,7 @@ import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 from matplotlib.colors import ListedColormap
 from matplotlib.colors import hsv_to_rgb
+import matplotlib.patheffects as path_effects
 from sklearn.decomposition import NMF, PCA
 from sklearn.manifold import TSNE
 from sklearn.cluster import DBSCAN, HDBSCAN, OPTICS
@@ -637,11 +638,14 @@ class radial_profile_analysis():
         fig, ax = plt.subplots(1, 1, figsize=(6, 4), dpi=300)
         for lv in range(self.num_comp):
             if self.NMF_profile_type == "zernike":
-                ax.plot(self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1], label="lv %d"%(lv+1))
+                tmp_ax = ax.plot(self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1], label="lv %d"%(lv+1))
             else:
-                ax.plot(self.x_axis, self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1], label="lv %d"%(lv+1))
+                tmp_ax = ax.plot(self.x_axis, self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1], label="lv %d"%(lv+1))
+
+            shadow_effect = path_effects.withStroke(linewidth=3, foreground='gray')
+            tmp_ax.set_path_effects([shadow_effect])
                 
-        ax.set_facecolor("lightgray")
+        # ax.set_facecolor("lightgray")
         ax.legend(loc='upper right')
         fig.tight_layout()
         plt.show()
@@ -788,15 +792,19 @@ class radial_profile_analysis():
             lv_mean_lv = []
             fig_lv, ax_lv = plt.subplots(1, 3, figsize=(12, 4), dpi=300)
             if self.NMF_profile_type == 'zernike':
-                ax_lv[0].plot(self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1])
+                tmp_ax = ax_lv[0].plot(self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1])
             else:
-                ax_lv[0].plot(self.x_axis, self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1])
+                tmp_ax = ax_lv[0].plot(self.x_axis, self.run_SI.DR_comp_vectors[lv], self.color_rep[lv+1])
+
+            shadow_effect = path_effects.withStroke(linewidth=3, foreground='gray')
+            tmp_ax.set_path_effects([shadow_effect])
+
             ax_twin = ax_lv[0].twinx()
             if str_name != None and str_name != []:
                 for key in str_name:
                     ax_twin.plot(self.x_axis, self.int_sf[key], label=key, linestyle=":")
                 ax_twin.legend(loc="right")
-            ax_lv[0].set_facecolor("lightgray")
+            # ax_lv[0].set_facecolor("lightgray")
             fig_lv.suptitle("Loading vector %d"%(lv+1))
         
             thresh = np.percentile(self.run_SI.DR_coeffs[:, lv], percentile_threshold)
@@ -1780,7 +1788,9 @@ class radial_profile_analysis():
             peaks = peaks + self.from_
             peak_sub[self.subfolders[i]] = peaks
             
-            ax.plot(self.x_axis, tmp_sp, c=self.color_rep[i+1], label=self.subfolders[i])
+            tmp_ax = ax.plot(self.x_axis, tmp_sp, c=self.color_rep[i+1], label=self.subfolders[i])
+            shadow_effect = path_effects.withStroke(linewidth=3, foreground='gray')
+            tmp_ax.set_path_effects([shadow_effect])
 
             if str_name != None and str_name != []:
                 ax_twin = ax.twinx()
@@ -1796,7 +1806,7 @@ class radial_profile_analysis():
                     ax.text(peak, 1.0, "%d"%(j+1))
 
             ax.set_xlabel('scattering vector (1/Å)')
-            ax.set_facecolor("lightgray")
+            # ax.set_facecolor("lightgray")
             ax.legend(loc="right")
             fig.tight_layout()
             plt.show()
@@ -3121,11 +3131,14 @@ class drca():
             if self.dat_dim == 3:
                 fig, ax = plt.subplots(1, 1, figsize=(6, 4), dpi=300) # all loading vectors
                 for i in range(self.DR_num_comp):
-                    ax.plot(self.dat_dim_range, self.DR_comp_vectors[i], "-", c=self.color_rep[i+1], label="loading vector %d"%(i+1))
+                    tmp_ax = ax.plot(self.dat_dim_range, self.DR_comp_vectors[i], "-", c=self.color_rep[i+1], label="loading vector %d"%(i+1))
+                    shadow_effect = path_effects.withStroke(linewidth=3, foreground='gray')
+                    tmp_ax.set_path_effects([shadow_effect])
+                                        
                 ax.legend(fontsize="large")
                 ax.set_xlabel(self.dat_unit, fontsize=10)
                 ax.tick_params(axis="x", labelsize=10)
-                ax.set_facecolor("lightgray")
+                # ax.set_facecolor("lightgray")
 
                 fig.tight_layout()
                 plt.show()
